@@ -9,7 +9,9 @@ and renders crisp vector graphics for every shape instead of emojis.
 from __future__ import annotations
 
 import json
+import queue
 import random
+import threading
 import tkinter as tk
 from tkinter import messagebox
 from pathlib import Path
@@ -185,6 +187,9 @@ class GestureApp(tk.Tk):
         self._timer_id: Optional[str] = None
         self._next_round_id: Optional[str] = None
         self._hint_visible: bool = False
+        self._self_train_running = False
+        self._self_train_queue: queue.Queue[tuple[Optional[int], Optional[Exception]]] = queue.Queue()
+        self._self_train_poll_id: Optional[str] = None
 
         self._build_ui()
         self._bind_shortcuts()
@@ -199,6 +204,9 @@ class GestureApp(tk.Tk):
 
     def destroy(self) -> None:
         self._cancel_timers()
+        if self._self_train_poll_id is not None:
+            self.after_cancel(self._self_train_poll_id)
+            self._self_train_poll_id = None
         super().destroy()
 
     # ── UI construction ────────────────────────────────────────────────────
@@ -514,10 +522,12 @@ class GestureApp(tk.Tk):
         tk.Frame(tb, bg=C["border"], width=1).pack(
             side="left", fill="y", pady=10, padx=4)
 
-        _btn(tb, "Регенерирай", C["surface2"], C["warn"],
-             command=self._regen_dataset).pack(side="left", padx=3, pady=12)
-        _btn(tb, "Самообучи ИИ", C["surface2"], C["success"],
-             command=self._run_self_train).pack(side="left", padx=3, pady=12)
+        self._regen_btn = _btn(tb, "Регенерирай", C["surface2"], C["warn"],
+                               command=self._regen_dataset)
+        self._regen_btn.pack(side="left", padx=3, pady=12)
+        self._self_train_btn = _btn(tb, "Самообучи ИИ", C["surface2"], C["success"],
+                                    command=self._run_self_train)
+        self._self_train_btn.pack(side="left", padx=3, pady=12)
 
         tk.Checkbutton(
             tb, text="Авто-обучение", variable=self._self_learn,
@@ -790,6 +800,8 @@ class GestureApp(tk.Tk):
     # ── Core actions ───────────────────────────────────────────────────────
 
     def _save_template(self) -> None:
+        if self._self_train_running:
+            return
         label = self._label_var.get().strip().lower().replace(" ", "_")
         if not label:
             messagebox.showwarning("Липсва етикет",
@@ -866,7 +878,7 @@ class GestureApp(tk.Tk):
 
     def _teach_from_result(self, idx: int) -> None:
         """Teach the classifier by clicking one of the Top-3 result rows."""
-        if self._mode.get() != "predict" or not self._strokes:
+        if self._self_train_running or self._mode.get() != "predict" or not self._strokes:
             return
         if idx >= len(self._last_top3):
             return
@@ -880,18 +892,54 @@ class GestureApp(tk.Tk):
         )
 
     def _run_self_train(self) -> None:
-        """Run automated hard-example self-training on the current dataset."""
+        """Run one bounded self-training pass without blocking the GUI."""
+        if self._self_train_running:
+            return
+
         import generate_dataset as gd
+        self._self_train_running = True
+        self._self_train_btn.config(state="disabled")
+        self._regen_btn.config(state="disabled")
+        self._save_btn.config(state="disabled")
         self._status.config(text="Самообучение в ход...")
         self.update_idletasks()
-        added = gd.self_train(dataset_path=DATASET_PATH, rounds=2, probes_per_class=6)
+
+        def train() -> None:
+            try:
+                added = gd.self_train(dataset_path=DATASET_PATH, rounds=1, probes_per_class=4)
+                self._self_train_queue.put((added, None))
+            except Exception as exc:
+                self._self_train_queue.put((None, exc))
+
+        threading.Thread(target=train, name="gesture-self-training", daemon=True).start()
+        self._self_train_poll_id = self.after(100, self._finish_self_train)
+
+    def _finish_self_train(self) -> None:
+        self._self_train_poll_id = None
+        try:
+            added, error = self._self_train_queue.get_nowait()
+        except queue.Empty:
+            self._self_train_poll_id = self.after(100, self._finish_self_train)
+            return
+
+        self._self_train_running = False
+        self._self_train_btn.config(state="normal")
+        self._regen_btn.config(state="normal")
+        self._save_btn.config(state="normal" if self._mode.get() == "record" else "disabled")
+        if error is not None:
+            self._status.config(text="Самообучението не завърши.")
+            messagebox.showerror("Грешка при самообучение", str(error))
+            return
+
         self._clf = KNNClassifier(k=K, dataset_path=DATASET_PATH)
         self._refresh_class_list()
         self._status.config(
-            text=f"Самообучението завърши: +{added} трудни примера (база: {self._clf.n_samples})"
+            text=f"Самообучението завърши: +{added} примера (база: {self._clf.n_samples})"
         )
 
     def _regen_dataset(self) -> None:
+        if self._self_train_running:
+            return
         if not messagebox.askyesno(
             "Регенерирай датасет",
             "Ще се генерират синтетични примери за 25 форми.\n"
@@ -920,6 +968,8 @@ class GestureApp(tk.Tk):
         )
 
     def _delete_class(self, label: str) -> None:
+        if self._self_train_running:
+            return
         if not messagebox.askyesno("Изтрий клас",
                                    f"Изтрий всички примери за «{label}»?"):
             return

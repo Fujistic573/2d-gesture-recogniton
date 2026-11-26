@@ -35,7 +35,7 @@ RANDOM_SEED       = 42
 CLOSED_SHAPES = {
     "circle", "ellipse", "square", "rectangle", "parallelogram", "trapezoid",
     "triangle", "pentagon", "hexagon", "diamond",
-    "star", "star6", "heart", "infinity", "crescent", "hourglass", "crown",
+    "star", "star6", "heart", "infinity", "crescent", "cloud", "hourglass", "crown",
 }
 
 BIDIRECTIONAL_SHAPES = {
@@ -311,6 +311,26 @@ def gen_cloud() -> Stroke:
     return pts
 
 
+def gen_cloud_variant(idx: int) -> Stroke:
+    """Generate a closed cloud outline with a varied number of soft bumps."""
+    bump_count = 3 + (idx % 4)
+    width = random.uniform(150.0, 210.0)
+    baseline = random.uniform(25.0, 45.0)
+    step = width / bump_count
+    pts: Stroke = []
+
+    for i in range(bump_count):
+        radius = step * random.uniform(0.48, 0.68)
+        cx = -width / 2 + step * (i + 0.5)
+        cy = baseline
+        angles = np.linspace(math.pi, 0.0, 18)
+        pts.extend((cx + radius * math.cos(a), cy - radius * math.sin(a)) for a in angles)
+
+    pts.extend([(width / 2, baseline), (width / 2, baseline + 28),
+                (-width / 2, baseline + 28), pts[0]])
+    return pts
+
+
 def gen_house() -> Stroke:
     return _densify([
         (-80, 0), (0, -90), (80, 0), (80, 90), (-80, 90), (-80, 0), (80, 0),
@@ -355,12 +375,94 @@ def gen_crown() -> Stroke:
     ])
 
 
+def gen_crown_variant(idx: int) -> Stroke:
+    """Generate a crown with varied peak count, height, and valley depth."""
+    peak_count = 3 + (idx % 4)
+    width = random.uniform(160.0, 210.0)
+    base_y = random.uniform(48.0, 70.0)
+    peak_xs = np.linspace(-width / 2, width / 2, peak_count)
+    pts: Stroke = [(-width / 2, base_y), (float(peak_xs[0]), -random.uniform(35.0, 90.0))]
+
+    for left_x, right_x in zip(peak_xs, peak_xs[1:]):
+        valley_x = float((left_x + right_x) / 2)
+        pts.append((valley_x, base_y - random.uniform(8.0, 34.0)))
+        pts.append((float(right_x), -random.uniform(35.0, 90.0)))
+
+    pts.extend([(width / 2, base_y), (-width / 2, base_y)])
+    return _densify(pts, per_seg=8)
+
+
 def gen_butterfly() -> Stroke:
     t = np.linspace(0, 2 * math.pi, 140)
     r = np.exp(np.cos(t)) - 2 * np.cos(4 * t) + np.sin(t / 12) ** 5
     xs = 28 * np.sin(t) * r
     ys = -28 * np.cos(t) * r
     return list(zip(xs.tolist(), ys.tolist()))
+
+
+def gen_butterfly_strokes(idx: int = 0) -> list[Stroke]:
+    """Generate a multi-stroke butterfly with varied wing proportions/details."""
+    style = idx % 4
+    upper_rx = random.uniform(42.0, 58.0)
+    upper_ry = random.uniform(34.0, 49.0)
+    lower_rx = random.uniform(30.0, 45.0)
+    lower_ry = random.uniform(32.0, 48.0)
+    upper_y = random.uniform(-34.0, -22.0)
+    lower_y = random.uniform(22.0, 36.0)
+    lobe = (0.08, 0.18, 0.28, 0.12)[style]
+
+    def wing(cx: float, cy: float, rx: float, ry: float, mirror: float) -> Stroke:
+        result: Stroke = []
+        for angle in np.linspace(0, 2 * math.pi, 34):
+            contour = 1.0 + lobe * math.cos(2 * angle) + 0.06 * math.sin(3 * angle)
+            result.append((cx + mirror * rx * math.cos(angle) * contour,
+                           cy + ry * math.sin(angle) * contour))
+        result.append(result[0])
+        return result
+
+    strokes = [
+        wing(-22.0, upper_y, upper_rx, upper_ry, 1.0),
+        wing(22.0, upper_y, upper_rx, upper_ry, -1.0),
+        wing(-18.0, lower_y, lower_rx, lower_ry, 1.0),
+        wing(18.0, lower_y, lower_rx, lower_ry, -1.0),
+        [(0.0, -48.0), (random.uniform(-3, 3), 0.0), (0.0, 66.0)],
+    ]
+    if idx % 3 != 0:
+        strokes.extend([
+            [(0.0, upper_y + 3), (-upper_rx * 0.72, upper_y - upper_ry * 0.48)],
+            [(0.0, upper_y + 3), (upper_rx * 0.72, upper_y - upper_ry * 0.48)],
+            [(0.0, lower_y - 2), (-lower_rx * 0.72, lower_y + lower_ry * 0.48)],
+            [(0.0, lower_y - 2), (lower_rx * 0.72, lower_y + lower_ry * 0.48)],
+        ])
+    if idx % 4 != 1:
+        strokes.extend([
+            _densify([(0.0, -45.0), (-12.0, -72.0), (-25.0, -80.0)], per_seg=5),
+            _densify([(0.0, -45.0), (12.0, -72.0), (25.0, -80.0)], per_seg=5),
+        ])
+
+    angle = random.uniform(-0.12, 0.12)
+    fx, fy = random.uniform(0.88, 1.12), random.uniform(0.88, 1.12)
+    cosine, sine = math.cos(angle), math.sin(angle)
+    transformed: list[Stroke] = []
+    for stroke in strokes:
+        pts = []
+        for x, y in stroke:
+            x, y = x * fx, y * fy
+            pts.append((cosine * x - sine * y + random.gauss(0, 2.0),
+                        sine * x + cosine * y + random.gauss(0, 2.0)))
+        if idx % 2:
+            pts.reverse()
+        transformed.append(pts)
+    return transformed
+
+
+def butterfly_vector(idx: int) -> np.ndarray:
+    """Create one normalized, lightly noised multi-stroke butterfly sample."""
+    from preprocessing import normalize_strokes
+
+    strokes = gen_butterfly_strokes(idx)
+    vector = normalize_strokes(strokes, N_POINTS)
+    return vector + np.random.normal(0, NOISE_STD, vector.shape)
 
 
 def gen_flower() -> Stroke:
@@ -485,6 +587,10 @@ def augment(pts: Stroke, label: str, idx: int, total: int) -> Stroke:
         )
     elif label == "s_shape":
         pts = gen_s_shape(x_amp=random.uniform(35.0, 75.0))
+    elif label == "cloud":
+        pts = gen_cloud_variant(idx)
+    elif label == "crown":
+        pts = gen_crown_variant(idx)
 
     if label in CLOSED_SHAPES:
         if idx % 2 == 1:
@@ -518,7 +624,13 @@ def generate() -> None:
         for i in range(SAMPLES_PER_CLASS):
             if i == 0:
                 # Keep sample 0 clean so it serves as a crisp UI prototype icon.
-                vec = normalize(gen_fn(), N_POINTS)
+                if label == "butterfly":
+                    from preprocessing import normalize_strokes
+                    vec = normalize_strokes(gen_butterfly_strokes(i), N_POINTS)
+                else:
+                    vec = normalize(gen_fn(), N_POINTS)
+            elif label == "butterfly":
+                vec = butterfly_vector(i)
             else:
                 raw = augment(gen_fn(), label, i, SAMPLES_PER_CLASS)
                 vec = normalize(raw, N_POINTS)
@@ -553,13 +665,16 @@ def self_train(
         new_samples: list[tuple[str, np.ndarray]] = []
         for label, gen_fn in SHAPES.items():
             for idx in range(probes_per_class):
-                raw = augment(gen_fn(), label, idx + SAMPLES_PER_CLASS // 2, SAMPLES_PER_CLASS)
-                vec = normalize(raw, N_POINTS) + np.random.normal(0, NOISE_STD, N_POINTS * 2)
+                sample_idx = idx + SAMPLES_PER_CLASS // 2
+                if label == "butterfly":
+                    vec = butterfly_vector(sample_idx)
+                else:
+                    raw = augment(gen_fn(), label, sample_idx, SAMPLES_PER_CLASS)
+                    vec = normalize(raw, N_POINTS) + np.random.normal(0, NOISE_STD, N_POINTS * 2)
                 res = clf.predict(vec)
                 if res is None or res[0] != label or res[1] < 0.80:
                     new_samples.append((label, vec))
-        for label, vec in new_samples:
-            clf.add_sample(label, vec)
+        clf.add_samples(new_samples)
         added += len(new_samples)
         if not new_samples:
             break

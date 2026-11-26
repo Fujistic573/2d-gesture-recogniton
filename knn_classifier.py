@@ -95,6 +95,13 @@ class KNNClassifier:
         self._samples.append(Sample(label, vector))
         self._save()
 
+    def add_samples(self, samples: list[tuple[str, np.ndarray]]) -> None:
+        """Append several labelled samples and persist them in one write."""
+        if not samples:
+            return
+        self._samples.extend(Sample(label, vector) for label, vector in samples)
+        self._save()
+
     def remove_label(self, label: str) -> int:
         """Remove all samples belonging to *label* and persist.
 
@@ -200,8 +207,10 @@ class KNNClassifier:
             {"label": s.label, "vector": s.vector.tolist()}
             for s in self._samples
         ]
-        with self.dataset_path.open("w", encoding="utf-8") as fh:
+        temp_path = self.dataset_path.with_suffix(self.dataset_path.suffix + ".tmp")
+        with temp_path.open("w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
+        temp_path.replace(self.dataset_path)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +219,14 @@ class KNNClassifier:
 
 def _chamfer_batch(q: np.ndarray, batch: np.ndarray) -> np.ndarray:
     """Vectorized symmetric Chamfer Euclidean distance from *q* (N, 2) to *batch* (M, N, 2)."""
-    diff = q[None, :, None, :] - batch[:, None, :, :]      # (M, N, N, 2)
-    dmat = np.sqrt(np.sum(diff * diff, axis=-1))          # (M, N, N)
-    return 0.5 * (dmat.min(axis=2).mean(axis=1) + dmat.min(axis=1).mean(axis=1))
+    # Bound temporary memory use when a large dataset is evaluated repeatedly.
+    result = np.empty(len(batch), dtype=float)
+    chunk_size = 256
+    for start in range(0, len(batch), chunk_size):
+        end = min(start + chunk_size, len(batch))
+        diff = q[None, :, None, :] - batch[start:end, None, :, :]
+        dmat = np.sqrt(np.sum(diff * diff, axis=-1))
+        result[start:end] = 0.5 * (
+            dmat.min(axis=2).mean(axis=1) + dmat.min(axis=1).mean(axis=1)
+        )
+    return result
