@@ -1,2 +1,41 @@
-# 2d-gesture-recogniton
-Real-time 2D gesture and shape recognition from point coordinates using geometric normalization, k-NN, and MLP
+# 2D Gesture Recognition & Skribbl Game
+
+Разпознаване на 2D жестове и форми от координати на точки с **k-NN** класификатор (симетрично Chamfer евклидово разстояние) и вградена мини-игра тип **Skribbl.io**.
+
+## Структура на проекта
+
+```
+2d-gesture-recogniton/
+├── app.py                # Tkinter GUI (Разпознаване, Skribbl Игра, Запис)
+├── preprocessing.py      # Многощрихова нормализация (N=32, центриране, мащабиране)
+├── knn_classifier.py     # Претеглен k-NN класификатор (само math + numpy)
+├── generate_dataset.py   # Генератор на 42 форми (1680 синтетични примера)
+├── verify.py             # Автоматични тестове на модела и GUI
+├── data/
+│   ├── dataset.json      # Съхранени шаблони
+│   └── scores.json       # Запазен рекорд за Skribbl Игра
+├── requirements.txt
+└── README.md
+```
+
+## Инсталиране и стартиране
+
+```bash
+pip install -r requirements.txt
+python generate_dataset.py   # опционално (data/dataset.json вече е генериран)
+python app.py
+```
+
+## Режими в приложението
+
+1. **Разпознаване** — рисувай свободно (на един или няколко щриха); Топ 3 предположенията с векторни графики се обновяват на живо.
+2. **Skribbl Игра** — ИИ-то ти задава случайна форма на български, а ти рисуваш преди да изтече таймерът:
+   - Нива на трудност: **Лесно** (35s, основни форми), **Средно** (30s, всички 42 форми), **Трудно** (18s, без подсказка).
+   - Точки, серия и запазен рекорд в `data/scores.json`.
+3. **Запис** — въведи име и добави свой шаблон в базата.
+
+## Клавишни комбинации
+
+- `Ctrl + Z` — Undo на последния щрих
+- `Delete` / `Escape` / **Десен клик** — изчистване на платното
+- `Enter` (в режим Запис) — запазване на шаблона
